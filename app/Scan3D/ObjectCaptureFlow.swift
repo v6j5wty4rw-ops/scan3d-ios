@@ -14,6 +14,10 @@ final class ObjectCaptureModel: ObservableObject {
     @Published var progress: Double = 0
     @Published var errorText = ""
     @Published var record: ScanRecord
+    @Published var shots = 0
+    @Published var maxShots = 0
+    @Published var feedbackText: String?
+    @Published var passNumber = 1
 
     let areaMode: Bool
     private let store: ScanStore
@@ -65,6 +69,10 @@ final class ObjectCaptureModel: ObservableObject {
                 if current.userCompletedScanPass != self.passCompleted {
                     self.passCompleted = current.userCompletedScanPass
                 }
+                if current.numberOfShotsTaken != self.shots { self.shots = current.numberOfShotsTaken }
+                if current.maximumNumberOfInputImages != self.maxShots { self.maxShots = current.maximumNumberOfInputImages }
+                let fb = Self.describe(current.feedback.map { String(describing: $0) })
+                if fb != self.feedbackText { self.feedbackText = fb }
                 try? await Task.sleep(nanoseconds: 300_000_000)
             }
         })
@@ -86,50 +94,45 @@ final class ObjectCaptureModel: ObservableObject {
         }
     }
 
-    var hint: String {
-        switch state {
-        case .initializing: return "Подготовка камеры…"
-        case .ready: return areaMode ? "Наведите камеру на область и нажмите «Начать съёмку»." : "Наведите камеру на деталь."
-        case .detecting: return "Подгоните рамку под деталь."
-        case .capturing:
-            return passCompleted
-                ? "Круг пройден. Снимите ещё круг выше/ниже, переверните деталь или завершите."
-                : "Медленно обходите деталь по кругу, держите её в кадре."
-        case .finishing: return "Сохранение снимков…"
-        default: return ""
+    /// Подсказки Object Capture → понятный текст.
+    static func describe(_ items: [String]) -> String? {
+        let map: [(String, String)] = [
+            ("tooclose", "Слишком близко — отойдите немного"),
+            ("toofar", "Слишком далеко — подойдите ближе"),
+            ("fast", "Двигайтесь медленнее"),
+            ("dark", "Мало света — добавьте освещение"),
+            ("lowlight", "Мало света — добавьте освещение"),
+            ("fieldofview", "Деталь вышла из кадра — верните её в центр"),
+            ("notflippable", "Эту деталь лучше не переворачивать"),
+            ("overcapturing", "Этот участок уже снят — двигайтесь дальше"),
+            ("notdetected", "Деталь не видна — наведите точку на неё"),
+        ]
+        let texts = items.compactMap { item -> String? in
+            let key = item.lowercased()
+            return map.first { key.contains($0.0) }?.1
         }
+        return texts.isEmpty ? nil : Array(Set(texts)).sorted().joined(separator: "\n")
     }
 
-    var primaryTitle: String? {
-        switch state {
-        case .ready: return areaMode ? "Начать съёмку" : "Найти деталь"
-        case .detecting: return "Начать съёмку"
-        case .capturing: return "Завершить съёмку"
-        default: return nil
-        }
-    }
+    var isDetecting: Bool { if case .detecting = state { return true } else { return false } }
+    var isCapturing: Bool { if case .capturing = state { return true } else { return false } }
 
-    func primaryAction() {
-        guard let s = session else { return }
-        switch s.state {
-        case .ready:
-            if areaMode {
-                s.startCapturing()
-            } else {
-                _ = s.startDetecting()
-            }
-        case .detecting:
-            s.startCapturing()
-        case .capturing:
-            s.finish()
-        default:
-            break
-        }
-    }
-
+    func findObject() { _ = session?.startDetecting() }
+    func startCapturing() { session?.startCapturing() }
+    func buildModel() { session?.finish() }
     func resetBox() { session?.resetDetection() }
-    func newPass() { session?.beginNewScanPass() }
-    func newPassAfterFlip() { session?.beginNewScanPassAfterFlip() }
+
+    func newPass() {
+        session?.beginNewScanPass()
+        passNumber += 1
+        passCompleted = false
+    }
+
+    func newPassAfterFlip() {
+        session?.beginNewScanPassAfterFlip()
+        passNumber += 1
+        passCompleted = false
+    }
 
     func cancel() {
         session?.cancel()
@@ -256,32 +259,84 @@ struct ObjectCaptureFlowView: View {
 
             Spacer()
 
-            Text(model.hint)
-                .font(.subheadline)
-                .multilineTextAlignment(.center)
-                .padding(10)
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
-                .padding(.horizontal)
+            stepCard
+        }
+    }
 
-            if case .capturing = model.state, model.passCompleted {
-                HStack {
-                    Button("Ещё круг") { model.newPass() }
-                    Button("Перевернуть") { model.newPassAfterFlip() }
+    private var totalSteps: Int { model.areaMode ? 2 : 3 }
+
+    private var shotsText: String {
+        model.maxShots > 0 ? "Снято: \(model.shots) из \(model.maxShots)" : "Снято: \(model.shots)"
+    }
+
+    @ViewBuilder
+    private var stepCard: some View {
+        switch model.state {
+        case .initializing:
+            StepCard(step: "Подготовка", title: "Запуск камеры", text: "Подождите пару секунд…") { EmptyView() }
+
+        case .ready:
+            if model.areaMode {
+                StepCard(
+                    step: "Шаг 1 из 2",
+                    title: "Наведите на объект",
+                    text: "Объект — в центре экрана. Когда будете готовы, нажмите кнопку и начинайте медленно двигаться вдоль него."
+                ) {
+                    WideButton(title: "Начать съёмку") { model.startCapturing() }
                 }
-                .buttonStyle(.bordered)
+            } else {
+                StepCard(
+                    step: "Шаг 1 из 3",
+                    title: "Найдите деталь",
+                    text: "Наведите точку в центре экрана на деталь с расстояния 30–60 см, чтобы деталь была в кадре целиком.",
+                    warning: model.feedbackText
+                ) {
+                    WideButton(title: "Найти деталь") { model.findObject() }
+                }
             }
 
-            HStack {
-                if case .detecting = model.state {
-                    Button("Сбросить рамку") { model.resetBox() }
-                        .buttonStyle(.bordered)
+        case .detecting:
+            StepCard(
+                step: "Шаг 2 из 3",
+                title: "Проверьте рамку",
+                text: "Рамка должна охватывать деталь целиком, без лишнего вокруг. Если не совпадает — потяните пальцем за её края.",
+                warning: model.feedbackText
+            ) {
+                WideButton(title: "Рамка верна — начать съёмку") { model.startCapturing() }
+                WideButton(title: "Найти заново", prominent: false) { model.resetBox() }
+            }
+
+        case .capturing:
+            if model.passCompleted {
+                StepCard(
+                    step: "Шаг \(totalSteps) из \(totalSteps) · круг \(model.passNumber)",
+                    title: "Круг \(model.passNumber) готов",
+                    text: "Для полной модели лучше 3 круга: на уровне детали, выше (сверху вниз) и после переворота детали. \(shotsText)."
+                ) {
+                    WideButton(title: "Ещё круг — выше или ниже", prominent: false) { model.newPass() }
+                    if !model.areaMode {
+                        WideButton(title: "Перевернуть деталь и снять низ", prominent: false) { model.newPassAfterFlip() }
+                    }
+                    WideButton(title: "Хватит — собрать модель") { model.buildModel() }
                 }
-                if let title = model.primaryTitle {
-                    Button(title) { model.primaryAction() }
-                        .buttonStyle(.borderedProminent)
+            } else {
+                StepCard(
+                    step: "Шаг \(totalSteps) из \(totalSteps) · круг \(model.passNumber)",
+                    title: model.areaMode ? "Двигайтесь вдоль объекта" : "Обходите деталь по кругу",
+                    text: model.areaMode
+                        ? "Медленно ведите камерой, снимая объект с разных сторон. Снимки делаются сами. \(shotsText)."
+                        : "Медленно идите вокруг детали, держа её в центре. Снимки делаются сами, белые штрихи показывают снятые стороны. \(shotsText).",
+                    warning: model.feedbackText
+                ) {
+                    WideButton(title: "Собрать модель сейчас", prominent: false) { model.buildModel() }
                 }
             }
-            .padding(.bottom, 30)
+
+        case .finishing:
+            StepCard(step: "Почти готово", title: "Сохранение снимков…", text: "Не закрывайте приложение.") { EmptyView() }
+
+        default:
+            EmptyView()
         }
     }
 }

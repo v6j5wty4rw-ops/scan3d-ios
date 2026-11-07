@@ -130,8 +130,18 @@ struct CaptureContainer: View {
     let record: ScanRecord
     let store: ScanStore
     let onClose: (Bool) -> Void
+    @State private var guideShown = false
 
     var body: some View {
+        if !guideShown {
+            MethodGuideView(method: record.method, onStart: { guideShown = true }, onCancel: { onClose(false) })
+        } else {
+            captureView
+        }
+    }
+
+    @ViewBuilder
+    private var captureView: some View {
         switch record.method {
         case .object:
             ObjectCaptureFlowView(record: record, store: store, areaMode: false, onClose: onClose)
