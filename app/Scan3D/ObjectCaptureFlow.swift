@@ -40,9 +40,9 @@ final class ObjectCaptureModel: ObservableObject {
         let s = ObjectCaptureSession()
         var config = ObjectCaptureSession.Configuration()
         config.checkpointDirectory = checkpointDir
-        s.start(imagesDirectory: imagesDir, configuration: config)
         session = s
 
+        // Подписка до start(), чтобы не пропустить переход в .ready.
         tasks.append(Task { [weak self] in
             for await newState in s.stateUpdates {
                 self?.handle(newState)
@@ -53,9 +53,26 @@ final class ObjectCaptureModel: ObservableObject {
                 self?.passCompleted = completed
             }
         })
+        s.start(imagesDirectory: imagesDir, configuration: config)
+
+        // Страховка: опрос состояния сессии, если обновление всё же пропущено.
+        tasks.append(Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self, let current = self.session else { return }
+                if String(describing: current.state) != String(describing: self.state) {
+                    self.handle(current.state)
+                }
+                if current.userCompletedScanPass != self.passCompleted {
+                    self.passCompleted = current.userCompletedScanPass
+                }
+                try? await Task.sleep(nanoseconds: 300_000_000)
+            }
+        })
     }
 
     private func handle(_ newState: ObjectCaptureSession.CaptureState) {
+        guard phase == .capturing else { return }
+        if String(describing: newState) == String(describing: state), session != nil { return }
         state = newState
         switch newState {
         case .completed:
