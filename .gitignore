@@ -5,3 +5,4 @@ app/build.log
 *.ipa
 Payload/
 .DS_Store
+Сборки/
