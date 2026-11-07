@@ -1,0 +1,32 @@
+name: Scan3D
+options:
+  bundleIdPrefix: com.konst
+  deploymentTarget:
+    iOS: "18.0"
+targets:
+  Scan3D:
+    type: application
+    platform: iOS
+    sources:
+      - path: Scan3D
+    info:
+      path: Scan3D/Info.plist
+      properties:
+        CFBundleDisplayName: "3D Сканер"
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        NSCameraUsageDescription: "Камера нужна для 3D-сканирования деталей."
+        UILaunchScreen: {}
+        UIRequiredDeviceCapabilities: [arm64, arkit]
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+        ITSAppUsesNonExemptEncryption: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.konst.scan3d
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        TARGETED_DEVICE_FAMILY: "1"
+        SWIFT_VERSION: "5.0"
+        CODE_SIGN_STYLE: Automatic

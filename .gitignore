@@ -1,0 +1,7 @@
+app/build/
+app/*.xcodeproj/
+app/Scan3D/Info.plist
+app/build.log
+*.ipa
+Payload/
+.DS_Store
